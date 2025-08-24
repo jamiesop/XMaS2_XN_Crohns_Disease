@@ -145,15 +145,6 @@ biles <- read.csv("~/Documents/Xmas 2/Data Analysis/xmas2_bileacids_ug_per_g.csv
         mutate(BA_secondary = BA_DCA + BA_LCA)
 
 
-ba.summ <- left_join(meta, biles) %>% 
-        mutate(SEC = BA_LCA + BA_DCA) %>% 
-        group_by(treatment, time) %>% 
-        summarize(mSEC = mean(SEC),
-                  sdSEC = sd(SEC))
-
-write_csv(ba.summ, "~/Documents/Xmas 2/secBA.csv")
-
-
 # INFLAMMATORY BIOMARKERS
 elisas <- read.csv("~/Documents/Xmas 2/Data Analysis/xmas2_ELISAs.csv") %>% 
         rename_with(.cols = 2:dim(.)[2], ~ paste0('EL_', .x)) %>% 
@@ -211,7 +202,7 @@ ps_counts <- ps_counts %>% filter_taxa(function(x) mean(x) > 1e-5, TRUE) # ASVs 
 # Transform to relative abundance
 psrelab <- ps_counts %>% transform_sample_counts(function(x) x / sum(x) )
 
-
+# Taxa Table
 tax <- ps_counts %>% 
         tax_table() %>% 
         data.frame() %>% 
@@ -224,6 +215,7 @@ tax <- ps_counts %>%
 
 # Create Demographics Table
 TB1 <- demo %>% 
+        # remove participant lost to attrition
         filter(part.id != 'p218') %>% 
         rename(sex = "Biological.sex..0...Female..1...Male.") %>% 
         group_by(group) %>% 
@@ -280,9 +272,9 @@ chisq.test(fem.tab) # pval = 0.37
 # CDAI scores ------------------------------------------------------------------
 
 cdaidata <- left_join(meta, cdai) %>% 
-        # Remove participant that did not complete trial
+        # Remove participant lost to attrition
         dplyr::filter(part.id != 'p218') %>% 
-        # Impute missing values with mean of measurement before and after (p213v4) (p215v5? - not included in metadata - should impute value later???)
+        # Impute missing values with mean of measurement before and after (p213v4) 
         mutate_at('cdai_score', ~ zero_impute_helper(.x))
 
 # Normality test (null = data follow a normal distribution)
@@ -291,9 +283,10 @@ cdai_norm <- cdaidata %>%
         summarize(normtest = nortest::ad.test(cdai_score)$p.value)
 # passes normality test
 
+# Assess QQ Plots
 qqnorm(cdaidata$cdai_score)
 
-# LM Model
+# LMER Model
 cdaiLMM <- lmerTest::lmer(cdai_score ~ treatment*time + (1|part.id), data = cdaidata)
 
 # Assess Contrasts
@@ -316,7 +309,6 @@ eldata <- left_join(meta, elisas) %>%
         # Remove participant that did not complete study
         filter(part.id != 'p218')
 
-
 # Check normality
 el.normtest <- eldata %>% 
         pivot_longer(starts_with('EL'), names_to = 'EL') %>% 
@@ -325,7 +317,7 @@ el.normtest <- eldata %>%
         mutate(norm = purrr::map(data, function(x) ad.test(x$value ))) %>%
         mutate(pval = purrr::map_dbl(norm, function(x) x$p.value))
 
-# LM Model
+# LMER Model
 els.lmm <- eldata %>% 
         mutate(across(starts_with('EL'), ~ log(.x + 1))) %>% 
         pivot_longer(starts_with('EL'), names_to = 'EL') %>% 
@@ -382,7 +374,7 @@ adiv_sum <- adiv %>%
         mutate(pval = purrr::map_dbl(norm.test, function(x) x$p.value))
 # Normality failed at a couple time points for Simpson (3) and shannon (1)
 
-# LM Model & contrasts
+# LMER Model & contrasts
 LMMadiv <- adiv %>% 
         mutate(Simpson = log(Simpson),
                Shannon = log(Shannon)) %>% 
@@ -589,6 +581,7 @@ adonis2(distmat~treatment, data = meta)
 
 # LM Model Beta Diversity by Time ---------------
 
+# Aitchison Distance
 ait.dist <- ps_counts %>% 
         rarefy_even_depth(rngseed = 11) %>% 
         otu_table() %>% 
@@ -641,7 +634,7 @@ AITcontsTvP <- data.frame(
 ) %>% 
         pivot_longer(everything(), names_to = 'comparisons', values_to = 'pvals') %>% 
         mutate(across(pvals, ~ p.adjust(.x, method = 'BH')))
-
+# No Significant differences
 
 
 
@@ -658,12 +651,12 @@ clr <- ps_counts %>%
         # Remove participant lost to follow up
         filter(part.id != 'p218')
 
-# Tidy
-clr_tidy <- clr %>% 
+# Pivot Long
+clr_long <- clr %>% 
         pivot_longer(cols = starts_with('ASV'), names_to = 'ASV', values_to = 'clr')
 
-# LM Model 
-clr_lm <- clr_tidy %>% 
+# LMER Model 
+clr_lm <- clr_long %>% 
         group_by(ASV) %>% 
         nest() %>% 
         mutate(model = purrr::map(data, function(x) lmerTest::lmer(clr ~ treatment*time + (1|part.id), data = x) )) %>% 
@@ -683,7 +676,6 @@ clr_lm <- clr_tidy %>%
 
 
 
-
 # Short-chain Fatty Acids ------------------
 
 # Join Data
@@ -699,7 +691,7 @@ fa_norm <- fa_tidy %>%
         mutate(norm_test = purrr::map(data, function(x) nortest::ad.test(x$conc)),
                pval = purrr::map_dbl(norm_test, function(x) x$p.value))
 
-# LM Model
+# LMER Model
 fa_LMM <- fa_tidy %>% 
         mutate(across(c(starts_with('FA'), -FA_acetic_acid), ~ log(.x))) %>% 
         pivot_longer(cols = starts_with('FA'), names_to = 'FA', values_to = 'conc') %>% 
@@ -746,7 +738,7 @@ badata <- left_join(meta, biles) %>%
 # Test Normality
 normcheck <- badata %>% 
         #remove DHCA because conc = 0 in many individuals and 
-        #throughing an error when trying to perform norm stat test
+        #throwing error when trying to perform norm stat test
         dplyr::select(-BA_DHCA) %>% 
         pivot_longer(cols = starts_with("BA_"), names_to = "BA", values_to = "conc") %>% 
         group_by(BA, treatment, time) %>% 
@@ -754,10 +746,9 @@ normcheck <- badata %>%
         mutate(norm_test = purrr::map(data, function(x) nortest::ad.test(x$conc)),
                pval = purrr::map_dbl(norm_test, function(x) x$p.value))
 
-# LM Model - individuals bile acids
+# LMER Model - individuals bile acids
 ba.LMM <- badata %>% 
         mutate(across(starts_with('BA'), ~ log( .x + 1 ))) %>% 
-        #mutate(across(BA_CA:length(colnames(.)), ~log(.x + 1))) %>% 
         pivot_longer(cols = starts_with("BA_"), names_to = "BA", values_to = "conc") %>% 
         group_by(BA) %>% 
         nest() %>% 
@@ -797,12 +788,19 @@ ba.contrasts <- ba.LMM %>%
 
 # Create BA groups based on chemical similarity 
 BA_groups <- badata %>% 
+        # Total
         mutate(TOTAL = rowSums(across(c('BA_CA':'BA_MCA')))) %>% 
+        # Primary unconjugated
         mutate(PR.UNC = rowSums(across(c(BA_CA, BA_CDCA)))) %>% 
+        # Primary conjugated0
         mutate(PR.CON = rowSums(across(c(BA_GCA, BA_TCA, BA_GCDCA, BA_TCDCA)))) %>% 
+        # Secondary unconjugated
         mutate(SEC.UNC = rowSums(across(c(BA_DCA, BA_LCA)))) %>% 
+        # Secondary conjugated
         mutate(SEC.CON = rowSums(across(c(BA_GDCA, BA_TDCA, BA_GLCA, BA_GLCA)))) %>% 
+        # Glycine conjugates
         mutate(GLY = rowSums(across(c(BA_GCA,, BA_GCDCA, BA_GUDCA, BA_GLCA, BA_GDCA)))) %>% 
+        # Taurine conjugates
         mutate(TAU = rowSums(across(c(BA_TCA, BA_TCDCA, BA_TUDCA)))) %>% 
         dplyr::select(sample.id, part.id, treatment, time, 'TOTAL':'TAU')
 
@@ -814,7 +812,7 @@ BA.G.norm <- BA_groups %>%
         mutate(norm_test = purrr::map(data, function(x) nortest::ad.test(x$conc)),
                pval = purrr::map_dbl(norm_test, function(x) x$p.value))
 
-# LM Model
+# LMER Model
 ba_groups_LMM <- BA_groups %>% 
         mutate(across(c( 'TOTAL':'TAU' ), ~ log(.x + 1))) %>% 
         pivot_longer(cols = c('TOTAL':'TAU'), names_to = 'BA', values_to = 'conc') %>% 
@@ -873,6 +871,18 @@ inflam.summ <- metab.data %>%
         # "High" inflammation indicates severe vs low-grade or no inflammaiton
         mutate(inflam.status = ifelse(c(EL_IL6 <= 30 & EL_TNF <= 30 & EL_IL10 <= 30), "low", "severe"))
 
+# Summary statistics of inflammatory markers at baseline
+inf_stats <-  metab.data %>% 
+        left_join(inflam.summ %>% dplyr::select(part.id, inflam.status)) %>% 
+        filter(time == 'v2') %>% 
+        pivot_longer(starts_with('EL_'), names_to = 'marker', values_to = 'conc') %>% 
+        group_by(inflam.status, marker) %>% 
+        nest() %>% 
+        mutate(mod = purrr::map(data, function(x) t.test(data = x, conc ~ treatment))) %>% 
+        mutate(pval = purrr::map_dbl(mod, function(x) x$p.value))
+# By inflammatory category, no significant difference in inflammatory cytokines 
+# between XN and placebo at baseline
+# -- suggests inflammatory status is driving difference between XN and placebo at week 4
 
 # Model CDAI score by placebo vs treatment in severe inflammation group
 resp_lm <- metab.data.scaled %>% 
@@ -917,7 +927,7 @@ resp_lm <- metab.data.scaled %>%
 
 # Biomarkers of Inflammation and Gut Barrier --------------
 
-# LM Model
+# LMER Model
 el_lm <- eldata %>% 
         filter(treatment == 'B') %>% 
         mutate(response = ifelse(part.id %in% c('p207', 'p209', 'p212', 'p220'), 'responder', 'nonresponder')) %>% 
@@ -944,7 +954,7 @@ el_lm <- eldata %>%
 
 # Alpha Diversity -----------------------------
 
-# LM Model
+# LMER Model
 response_adiv_lm <- adiv %>% 
         filter(treatment == 'B') %>% 
         mutate(response = ifelse(part.id %in% c('p207', 'p209', 'p212', 'p220'), 'responder', 'nonresponder')) %>% 
@@ -988,7 +998,7 @@ clr <- ct_treat %>%
         decostand(method = 'clr', pseudocount = 1) %>% 
         rownames_to_column('sample.id')
 
-# LM Model
+# LMER Model
 clr_lm <- left_join(mdata, clr) %>% 
         pivot_longer(cols = starts_with('ASV'), names_to = 'ASV', values_to = 'clr') %>% 
         # Removed due to treatment noncompliance
@@ -1017,7 +1027,7 @@ clr_lm <- left_join(mdata, clr) %>%
 
 # Short-chain fatty acids --------------------------------
 
-# LM Model
+# LMER Model
 fa_lm <- fa_tidy %>% 
         filter(treatment == 'B') %>% 
         mutate(response = ifelse(part.id %in% c('p207', 'p209', 'p212', 'p220'), 'responder', 'nonresponder')) %>% 
@@ -1055,7 +1065,7 @@ BA_groups <- badata %>%
         mutate(BA_TAU = rowSums(across(c(BA_TCA, BA_TCDCA, BA_TUDCA)))) %>% 
         dplyr::select(sample.id, part.id, treatment, time, 'BA_TOTAL':'BA_TAU')
 
-# Tidy
+# LMER Model
 ba_lm <- BA_groups %>% 
         mutate(across(starts_with('BA'), ~ log( .x + 1 ))) %>% 
         mutate(response = ifelse(part.id %in% c('p207', 'p209', 'p212', 'p220'), 'responder', 'nonresponder')) %>% 
@@ -1081,7 +1091,7 @@ ba_lm <- BA_groups %>%
 
 # XN Metabolites ---------------------------
 
-# LM Model
+# LMER Model
 xn_lm <- left_join(meta, xn) %>% 
         filter(treatment == 'B') %>% 
         mutate(response = ifelse(part.id %in% c('p207', 'p209', 'p212', 'p220'), 'responder', 'nonresponder')) %>% 
@@ -1108,7 +1118,7 @@ xn_lm <- left_join(meta, xn) %>%
 
 
 
-# Stepwise Backward Regression: CDAI ~ phenotype -------------------------------
+# Stepwise Backward Regression: CDAI ~ phenotype features ----------------------
 
 # Log Transform & Join data sets:
 metab.data.scaled <- left_join(meta, xn %>% mutate(across(starts_with('XN'), ~ log(.x + 1)))) %>% 
@@ -1121,6 +1131,7 @@ metab.data.scaled <- left_join(meta, xn %>% mutate(across(starts_with('XN'), ~ l
 ct_treat <- ps_counts %>% 
         subset_samples(treatment == 'B')
 
+# metadata
 mdata <- sample_data(ct_treat) %>% 
         data.frame() %>% 
         rownames_to_column("sample.id") %>% 
@@ -1132,19 +1143,21 @@ clr <- ct_treat %>%
         as.data.frame() %>% 
         decostand(method = 'clr', pseudocount = 1) %>% 
         rownames_to_column('sample.id')
-
+# JOIN
 full.data.treat <- left_join(mdata, clr) %>% 
         left_join(metab.data.scaled) %>% 
         filter(treatment == 'B') %>% 
         filter(part.id != 'p218') %>% 
         filter(!c(part.id == 'p220' & time == 'v5')) 
 
-
+# Full model
 fullMod <- lmerTest::lmer(cdai_score ~ BA_secondary + ASV77 + ASV57 + EL_TNF + EL_IL10 + EL_IL6 + (1|part.id),
                           data = full.data.treat, REML = F)
 
+# backward stepwise for fixed effects
 stepMod <- lmerTest::step(fullMod, reduce.random=F)
 
+# Final model
 finalMod <- lmerTest::lmer(cdai_score ~ BA_secondary + EL_IL10 + (1|part.id),
                            data = full.data.treat, REML = F)
 
@@ -1154,8 +1167,9 @@ MuMIn::r.squaredGLMM(finalMod) # R2 = 0.34
 
 
 
-# Stepwise Backward Regression: DELTA CDAI by baseline biomarkers -------------
+# Stepwise Backward Regression: DELTA CDAI ~ phenotypes features -------------
 
+# Create new variable (delta CDAI)
 delta.cdai <- full.data.treat %>% 
         filter(time %in% c('v2', 'v6')) %>% 
         dplyr::select(part.id, time, cdai_score, BA_secondary, 
@@ -1165,13 +1179,14 @@ delta.cdai <- full.data.treat %>%
                                                          'EL_TNF')) %>% 
         mutate(delt.cdai = cdai_score_v6 - cdai_score_v2)
 
-
+# Full model
 fullMod <- lm(delt.cdai ~ EL_IL10_v2 + EL_IL6_v2 + EL_TNF_v2 + 
                       ASV77_v2 + ASV57_v2 + BA_secondary_v2, data = delta.cdai)
 
+# Backward stepwise
 stepMod <- stats::step(fullMod, direction = 'backward')
 
-
+# Final model
 finalMod <- lm(delt.cdai ~ EL_TNF_v2 + ASV77_v2 + ASV57_v2, data = delta.cdai)
 summary(finalMod)
 # adjusted R-squared = 0.33
@@ -1183,10 +1198,11 @@ summary(finalMod)
 
 # sPLS Analysis to integrate Microbiota & XN Metabolites ----------------------
 
+# Join XN + metadata
 xndata <- left_join(meta, xn) %>% 
         mutate(across(starts_with('XN'), ~ log(.x + 1)))
 
-
+# Microbiome data (CLR transformed)
 microdata <- ps_counts %>% 
         #set.seed(711)
         rarefy_even_depth(rngseed = 711) %>% 
@@ -1195,7 +1211,7 @@ microdata <- ps_counts %>%
         decostand(method = 'clr', pseudocount = 1) %>% 
         rownames_to_column('sample.id')
 
-# Join all by sample ids
+# Join all by sample ids (remove baseline without XN exposure)
 fulldata <- left_join(xndata, microdata) %>% 
         filter(treatment == 'B' & time != 'v2') %>% 
         column_to_rownames('sample.id')
@@ -1236,7 +1252,7 @@ plot(perf.spls.xns, criterion = 'Q2.total') # 1 component suitable - keep 2 in f
 list.keepX <- c(seq(10, 50, 5))
 list.keepY <- c(6) # include all XNs variables since there are only 6
 
-
+# Model tune
 tune.spls.xns <- tune.spls(X = micro.block, Y = metab.block, ncomp = 1,
                            multilevel = as.factor(fulldata$part.id),
                            test.keepX = list.keepX,
